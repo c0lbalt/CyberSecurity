@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat</title>
+</head>
+<body>
+<!--Handle logout-->
+<form action="{% url 'logout' %}" method="post">
+    {% csrf_token %}
+    <button type="submit">Logout</button>
+</form>
+
+<div class="header">
+    <h1>Welcome {{ request.user.username }}</h1>
+</div>
+
+<div class="container">
+    <div class="messages">
+        <div id="sse-data"></div>
+    </div>
+
+    <form x-cloak
+          @submit.prevent="submit(event)" x-data="{state: 'composing', errors: {}}"> <!-- Pass in event objects-->
+        <div>
+            <textarea name="content" @input="state = 'composing'" autofocus placeholder="Your next message..."></textarea>
+            <button class="button">
+                Send
+            </button>
+        </div>
+
+        <div x-show="state === 'error'">
+            <p>
+                Error sending your message ❌
+            </p>
+        </div>
+    </form>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script> <!-- Add CryptoJS -->
+<script>
+    let eventSource;
+    const sseData = document.getElementById('sse-data');
+
+    function startSSE() {
+        eventSource = new EventSource('/stream-chat-messages/');
+        eventSource.onmessage = event => {
+            const data = JSON.parse(event.data);
+            const messageHTML = `
+                <div class="message-box">
+                    <div class="message-author">${data.author__name}</div>
+                    <div class="message-content">${data.content}</div>
+                </div>`;
+            sseData.innerHTML += messageHTML;
+        };
+    }
+
+    // On load, start SSE if the browser supports it.
+    if (typeof(EventSource) !== 'undefined') {
+        startSSE();
+    } else {
+        sseData.innerHTML = 'Whoops! Your browser doesn\'t receive server-sent events.';
+    }
+
+    const csrfToken = '{{ csrf_token }}';
+function submit(event) {
+    event.preventDefault();
+
+    // Get the content from the textarea
+    const form = event.target;
+    const content = form.querySelector('textarea[name="content"]').value;
+
+    if (!content.trim()) {
+        alert("Message cannot be empty!"); // popup
+        return;
+    }
+
+    // Hash the content using CryptoJS
+    const clientHash = CryptoJS.SHA256(content).toString();
+
+    // Create FormData and append content and hash
+    const formData = new FormData();
+    formData.append('content', content);
+    formData.append('hash', clientHash);
+
+    // Send the POST request
+    fetch("/create-message/", {
+        method: "post",
+        body: formData,
+        headers: {
+            'X-CSRFToken': csrfToken,
+        },
+    })
+        .then(response => {
+            // Handle non-201 responses
+            if (!response.ok) {
+                return response.json().then(errData => {
+                    console.error("Error from server:", errData);
+                    throw new Error(errData.error || "Error sending your message ❌");
+                });
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log("Message sent successfully:", data); 
+            form.querySelector('textarea[name="content"]').value = ""; // Clear the textarea
+        })
+        .catch(error => {
+            console.error("Error:", error);
+            alert(error.message || "Failed to send the message. Please try again.");
+        });
+}
+</script>
+<script defer="" src="https://cdn.jsdelivr.net/npm/alpinejs@3.12.3/dist/cdn.min.js"></script>
+</body>
+</html>
